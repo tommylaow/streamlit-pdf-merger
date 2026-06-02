@@ -1,5 +1,6 @@
 import streamlit as st
 from pypdf import PdfWriter, PdfReader
+import fitz  # PyMuPDF สำหรับการทำพรีวิวรูปภาพ
 import io
 import zipfile
 
@@ -51,6 +52,15 @@ st.markdown("""
         margin-bottom: 15px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.02);
     }
+    .preview-card {
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 10px;
+        background-color: #ffffff;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+        margin-bottom: 15px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -59,11 +69,12 @@ st.title("📄 PDF Magic Toolkit")
 st.subheader("เครื่องมือจัดการและแก้ไขไฟล์ PDF ครบวงจรบนเว็บของคุณ")
 st.write("เลือกเครื่องมือด้านล่างเพื่อจัดการไฟล์ PDF ได้อย่างสะดวกรวดเร็ว")
 
-# แยกเมนูการใช้งานเป็น 3 แท็บหลัก
-tab_merge, tab_insert, tab_extract = st.tabs([
+# แยกเมนูการใช้งานเป็น 4 แท็บหลัก
+tab_merge, tab_insert, tab_extract, tab_reorder = st.tabs([
     "🔗 รวมไฟล์ปกติ (Merge)", 
     "➕ แทรกหน้าเฉพาะเจาะจง (Insert Pages)", 
-    "✂️ แยก/ตัดหน้า PDF (Extract Pages)"
+    "✂️ แยก/ตัดหน้า PDF (Extract Pages)",
+    "📸 จัดเรียงหน้าแบบเห็นภาพ (Visual Reorder)"
 ])
 
 # ----------------- TAB 1: รวมไฟล์ปกติ -----------------
@@ -313,7 +324,6 @@ with tab_extract:
                                 error_found = True
                                 
                     if not error_found and splits:
-                        # สร้างไฟล์ ZIP เพื่อรวมไฟล์ทั้งหมดให้ดาวน์โหลดง่ายๆ
                         zip_buffer = io.BytesIO()
                         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
                             for start, end, filename in splits:
@@ -337,7 +347,6 @@ with tab_extract:
                         )
                         
             else:
-                # ดึงเฉพาะบางหน้าเป็นไฟล์เดียว
                 selected_pages = st.multiselect(
                     "เลือกเลขหน้าที่ต้องการดึงมารวมกันเป็นไฟล์ใหม่",
                     options=list(range(1, total_pages + 1)),
@@ -375,6 +384,137 @@ with tab_extract:
             st.error(f"เกิดข้อผิดพลาดในการวิเคราะห์ไฟล์: {str(e)}")
     else:
         st.info("💡 กรุณาอัปโหลดไฟล์ PDF เพื่อทำการตัด/แยกหน้าไฟล์")
+
+
+# ----------------- TAB 4: จัดเรียงหน้าแบบเห็นภาพ -----------------
+with tab_reorder:
+    st.write("### 📸 จัดเรียงสลับลำดับและลบหน้า PDF แบบเห็นภาพพรีวิว")
+    st.write("อัปโหลดไฟล์ PDF ระบบจะแสดงผลพรีวิวทุกหน้าของเอกสาร เพื่อให้คุณเลื่อนสลับตำแหน่งหน้าหรือลบหน้าออกได้อย่างง่ายดาย")
+    
+    reorder_file = st.file_uploader("เลือกไฟล์ PDF ที่ต้องการจัดเรียงลำดับใหม่", type=["pdf"], key="upload_reorder")
+    
+    if reorder_file:
+        try:
+            # ตรวจจับการอัปโหลดไฟล์ใหม่และทำการล้างค่าในระบบ
+            if st.session_state.get('reorder_filename') != reorder_file.name:
+                st.session_state['reorder_filename'] = reorder_file.name
+                
+                # อ่านไฟล์และแคชภาพตัวอย่างของแต่ละหน้า
+                pdf_bytes = reorder_file.read()
+                st.session_state['reorder_pdf_bytes'] = pdf_bytes
+                
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                total_reorder_pages = len(doc)
+                st.session_state['reorder_list'] = list(range(total_reorder_pages))
+                st.session_state['reorder_images'] = {}
+                
+                # เรนเดอร์หน้าพรีวิวเป็นรูปภาพ (DPI ต่ำ 75 เพื่อความรวดเร็วและประหยัดหน่วยความจำ)
+                for idx in range(total_reorder_pages):
+                    page = doc.load_page(idx)
+                    pix = page.get_pixmap(dpi=75)
+                    st.session_state['reorder_images'][idx] = pix.tobytes("png")
+                doc.close()
+                st.rerun()
+
+            current_list = st.session_state.get('reorder_list', [])
+            
+            if current_list:
+                st.write(f"#### 📸 พรีวิวหน้าเอกสารทั้งหมด ({len(current_list)} หน้า)")
+                st.info("กดปุ่มลูกศร ⬅️ ➡️ เพื่อเลื่อนตำแหน่งซ้ายขวา หรือกดถังขยะ 🗑️ เพื่อนำหน้านั้นออกจากเอกสาร")
+                
+                # กำหนดให้แถวหนึ่งมี 3 หน้า
+                cols = st.columns(3)
+                
+                for pos, page_idx in enumerate(current_list):
+                    col_index = pos % 3
+                    
+                    with cols[col_index]:
+                        st.markdown(f"""
+                        <div class="preview-card">
+                            <span style="font-weight: bold; color: #1e293b; font-size: 14px;">ตำแหน่งใหม่ที่: {pos + 1}</span>
+                            <br>
+                            <span style="font-size: 11px; color: #64748b;">(หน้าเดิม: {page_idx + 1})</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # แสดงรูปภาพพรีวิวของหน้านั้นๆ
+                        if page_idx in st.session_state['reorder_images']:
+                            st.image(st.session_state['reorder_images'][page_idx], use_container_width=True)
+                            
+                        # ปุ่มปรับแต่งตำแหน่ง
+                        c_left, c_del, c_right = st.columns([1, 1, 1])
+                        
+                        with c_left:
+                            # เลื่อนซ้าย (ไม่ทำกับรูปภาพแรกสุด)
+                            if pos > 0:
+                                if st.button("⬅️", key=f"move_l_{pos}_{page_idx}", help="เลื่อนไปซ้าย"):
+                                    current_list[pos], current_list[pos - 1] = current_list[pos - 1], current_list[pos]
+                                    st.session_state['reorder_list'] = current_list
+                                    st.rerun()
+                        
+                        with c_del:
+                            # ลบหน้านี้ออกจากเอกสารที่จะส่งออก
+                            if st.button("🗑️", key=f"move_d_{pos}_{page_idx}", help="ลบหน้านี้"):
+                                current_list.pop(pos)
+                                st.session_state['reorder_list'] = current_list
+                                st.rerun()
+                                
+                        with c_right:
+                            # เลื่อนขวา (ไม่ทำกับรูปภาพสุดท้าย)
+                            if pos < len(current_list) - 1:
+                                if st.button("➡️", key=f"move_r_{pos}_{page_idx}", help="เลื่อนไปขวา"):
+                                    current_list[pos], current_list[pos + 1] = current_list[pos + 1], current_list[pos]
+                                    st.session_state['reorder_list'] = current_list
+                                    st.rerun()
+                                    
+                        st.write("---")
+
+                # ปุ่มล้างหรือรีเซ็ต
+                if st.button("🔄 รีเซ็ตลำดับใหม่ทั้งหมด (กลับไปเริ่มต้น)", key="reset_reorder"):
+                    doc = fitz.open(stream=st.session_state['reorder_pdf_bytes'], filetype="pdf")
+                    st.session_state['reorder_list'] = list(range(len(doc)))
+                    doc.close()
+                    st.rerun()
+                    
+                st.divider()
+                
+                reorder_out_name = st.text_input("ตั้งชื่อไฟล์ผลลัพธ์จัดเรียงใหม่", value="reordered_output.pdf")
+                if not reorder_out_name.endswith(".pdf"):
+                    reorder_out_name += ".pdf"
+                    
+                # ปุ่มบันทึกผลการจัดสลับ
+                if st.button("🚀 บันทึกและสร้างไฟล์ PDF ที่จัดเรียงลำดับใหม่", type="primary", use_container_width=True):
+                    with st.spinner("กำลังดำเนินการเขียนไฟล์ PDF ใหม่..."):
+                        try:
+                            # อ่านต้นฉบับ
+                            reader = PdfReader(io.BytesIO(st.session_state['reorder_pdf_bytes']))
+                            writer = PdfWriter()
+                            
+                            # เพิ่มหน้าตามลำดับล่าสุดที่ถูกจัดการใน List
+                            for p_idx in current_list:
+                                writer.add_page(reader.pages[p_idx])
+                                
+                            out_bytes = io.BytesIO()
+                            writer.write(out_bytes)
+                            writer.close()
+                            out_bytes.seek(0)
+                            
+                            st.success("🎉 บันทึกการจัดลำดับหน้าเสร็จสิ้น!")
+                            st.download_button(
+                                label="📥 ดาวน์โหลดไฟล์ PDF ลำดับใหม่ล่าสุด",
+                                data=out_bytes,
+                                file_name=reorder_out_name,
+                                mime="application/pdf",
+                                use_container_width=True
+                            )
+                        except Exception as e:
+                            st.error(f"เกิดข้อผิดพลาดในการเขียนไฟล์: {str(e)}")
+            else:
+                st.warning("⚠️ ไม่มีหน้าเอกสารเหลือในรายการจัดเรียง กรุณากดปุ่มรีเซ็ตด้านบนเพื่อโหลดหน้าเอกสารกลับมาใหม่")
+        except Exception as e:
+            st.error(f"เกิดข้อผิดพลาดในการเปิดไฟล์เอกสาร: {str(e)}")
+    else:
+        st.info("💡 กรุณาอัปโหลดไฟล์ PDF เพื่อเริ่มต้นพรีวิวและจัดเรียงลำดับหน้าแบบเห็นภาพ")
 
 # Footer ส่วนท้ายหน้าเว็บ
 st.divider()
