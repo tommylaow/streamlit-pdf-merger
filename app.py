@@ -1,5 +1,5 @@
 import streamlit as st
-from pypdf import PdfMerger
+from pypdf import PdfWriter
 import io
 
 # การตั้งค่าหน้าเว็บ Streamlit
@@ -134,7 +134,7 @@ if st.session_state['pdf_list']:
     if st.button("🚀 เริ่มต้นรวมไฟล์ PDF", key="btn_merge", use_container_width=True, type="primary"):
         with st.spinner("กำลังดำเนินการรวมไฟล์ PDF กรุณารอสักครู่..."):
             try:
-                merger = PdfMerger()
+                merger = PdfWriter()
                 for item in st.session_state['pdf_list']:
                     # ใช้ BytesIO ในการอ่าน Content ของไฟล์ในหน่วยความจำ
                     merger.append(io.BytesIO(item['content']))
